@@ -5,6 +5,7 @@ import io
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 from bs4 import BeautifulSoup
+import concurrent.futures  # 🚀 (추가) 일꾼 복제 마법 도구
 
 # =============================================================================
 # [설정] 기본 셋팅
@@ -155,19 +156,37 @@ def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
     except:
         return 0, "에러", pd.DataFrame(), 0, 0
 
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_fully_analyzed_data(universe_df):
     results = []
-    for i, row in universe_df.iterrows():
+
+    # 💡 일꾼 1명이 1개 종목을 분석하는 전용 작업 지시서
+    def process_stock(row):
         code, name = row['종목코드'], row['종목명']
         marcap_100m = int(row['시가총액'] / 100000000)
-        score, status, _, high_price, target_yield = analyze_swing_probability(code, is_mega_cap=(marcap_100m >= 100000))
+        score, status, _, high_price, target_yield = analyze_swing_probability(code,
+                                                                               is_mega_cap=(marcap_100m >= 100000))
+
         if score > 0:
-            results.append({
-                "상태": status, "점수": score, "종목명": name, 
-                "현재가": row['현재가'], "등락률": row['등락률'], 
+            return {
+                "상태": status, "점수": score, "종목명": name,
+                "현재가": row['현재가'], "등락률": row['등락률'],
                 "전고점 기대수익(%)": target_yield
-            })
+            }
+        return None
+
+    # 🚀 일꾼 15명을 동시에 투입해서 초고속으로 차트를 분석합니다!
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        # 모든 종목(100개)을 15명의 일꾼에게 나눠서 던져줌
+        futures = [executor.submit(process_stock, row) for i, row in universe_df.iterrows()]
+
+        # 분석이 끝나는 대로 순서대로 수거해서 리스트에 담음
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                results.append(res)
+
     return results
 
 # =============================================================================
